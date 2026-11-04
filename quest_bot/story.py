@@ -1,4 +1,4 @@
-from . import battle, drunk, flags
+from . import battle, drunk, flags, lost
 from .models import Quest, State
 
 
@@ -11,6 +11,11 @@ class StoryEngine:
         self.rng = rng
         self.clock = clock
         self.rules = rules
+        has_lost = any(choice.room == "lost" for scene in content.scenes.values()
+                       for choice in scene.choices)
+        if has_lost:
+            for sid in (rules.lost_win, rules.lost_win_safe, rules.lost_lose):
+                self._scene(sid)
 
     def _scene(self, sid):
         if sid not in self.content.scenes:
@@ -58,8 +63,6 @@ class StoryEngine:
         if result.pre_drunk and len(result.pre_drunk["visible"]) > 1:
             result.pre_drunk["visible"].remove(index)
             return result
-        if choice.note == "minigame" and choice.room != "drunk":
-            raise ValueError("Для этого выбора нужен модуль специального режима")
         flags.apply(result.flags, choice.flags)
         if choice.note == "battle":
             result.battle = battle.enter(choice)
@@ -67,7 +70,10 @@ class StoryEngine:
             self.arrive(result)
             return result
         if choice.note == "minigame":
-            result.game = drunk.enter(choice.win, choice.lose, self.clock(), self.rng)
+            if choice.room == "drunk":
+                result.game = drunk.enter(choice.win, choice.lose, self.clock(), self.rng)
+            else:
+                result.game = lost.enter(self.clock(), self.rules, self.rng)
             result.pre_drunk = None
             return result
         result.history = (result.history + str(index + 1))[-len(SECRET):]
@@ -94,9 +100,17 @@ class StoryEngine:
         result = state.model_copy(deep=True)
         if not result.game:
             raise ValueError("Мини-игра неактивна")
-        if result.game["kind"] != "drunk":
+        if result.game["kind"] == "drunk":
+            destination = drunk.step(result.game, value)
+        elif result.game["kind"] == "lost":
+            if isinstance(value, str):
+                try:
+                    value = int(value)
+                except ValueError as error:
+                    raise ValueError("Неверная числовая кнопка") from error
+            destination = lost.step(result.game, value, self.clock(), self.rules, result.flags)
+        else:
             raise ValueError("Неизвестная мини-игра")
-        destination = drunk.step(result.game, value)
         if destination is not None:
             self._scene(destination)
             result.game = None
@@ -107,7 +121,11 @@ class StoryEngine:
     def tick(self, state):
         result = state.model_copy(deep=True)
         now = self.clock()
-        if (result.game and result.game["kind"] == "drunk"
+        if result.game and result.game["kind"] == "lost" and now >= result.game["deadline"]:
+            result.game = None
+            result.scene = self.rules.lost_lose
+            self.arrive(result)
+        elif (result.game and result.game["kind"] == "drunk"
                 and now - result.game["shuffled"] >= self.rules.shuffle_interval):
             self.rng.shuffle(result.game["letters"])
             result.game["shuffled"] = now
