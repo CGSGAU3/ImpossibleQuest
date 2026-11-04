@@ -2,6 +2,9 @@ from . import flags
 from .models import Quest, State
 
 
+SECRET = "2213112312113312231"
+
+
 class StoryEngine:
     def __init__(self, content: Quest, rng, clock, rules):
         self.content = content
@@ -42,7 +45,10 @@ class StoryEngine:
         if choice.note not in (None, "conditional", "random_choice"):
             raise ValueError("Для этого выбора нужен модуль специального режима")
         flags.apply(result.flags, choice.flags)
-        if choice.note == "conditional":
+        result.history = (result.history + str(index + 1))[-len(SECRET):]
+        if result.history == SECRET:
+            destination = self.content.secret_ending
+        elif choice.note == "conditional":
             destination = next(
                 (condition.next for condition in choice.conditions
                  if flags.matches(result.flags, condition.flags_required)),
