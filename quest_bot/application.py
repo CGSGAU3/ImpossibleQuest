@@ -121,3 +121,18 @@ class Application:
                 raise ValueError("Неверная кнопка")
             updated = await self.sessions.put(uid, updated)
             return self.render(uid, updated)
+
+    async def tick(self, uid):
+        async with self.sessions.locks[uid]:
+            state = await self.sessions.get(uid)
+            if not state.game:
+                return None
+            updated = self.story.tick(state)
+            if updated == state and state.game["kind"] != "lost":
+                return None
+            if updated.scene != state.scene or bool(updated.game) != bool(state.game):
+                updated.restart_pending = False
+            elif state.restart_pending:
+                return None
+            updated = await self.sessions.put(uid, updated)
+            return self.render(uid, updated)

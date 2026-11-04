@@ -1,6 +1,7 @@
+import asyncio
 import logging
 
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError, TelegramRetryAfter
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 
@@ -29,3 +30,66 @@ async def send_view(bot, chat_id, view, edit=None):
             chat_id, chunk, reply_markup=markup if index == len(chunks) - 1 else None,
         )
     return message
+
+
+class GameTimers:
+    def __init__(self, app, sender, locks, sleep=asyncio.sleep):
+        self.app = app
+        self.sender = sender
+        self.locks = locks
+        self.sleep = sleep
+        self.messages = {}
+        self.tasks = {}
+        self.pending = {}
+
+    def remember(self, uid, message):
+        self.pending.pop(uid, None)
+        state = self.app.sessions.states.get(uid)
+        if not state or not state.game:
+            self.messages.pop(uid, None)
+            return
+        self.messages[uid] = message
+        task = self.tasks.get(uid)
+        if task is None or task.done():
+            self.tasks[uid] = asyncio.create_task(self._loop(uid))
+
+    async def update(self, uid):
+        async with self.locks[uid]:
+            message = self.messages.get(uid)
+            if message is None:
+                return
+            updated = await self.app.tick(uid)
+            if updated is not None:
+                self.pending[uid] = updated
+            view = self.pending.get(uid)
+            if view is not None:
+                try:
+                    self.messages[uid] = await self.sender(message, view)
+                except TelegramRetryAfter as error:
+                    log.warning("Telegram ограничил обновления: %s секунд", error.retry_after)
+                except (TelegramBadRequest, TelegramNetworkError):
+                    log.warning("Не удалось доставить обновление мини-игры", exc_info=True)
+                else:
+                    self.pending.pop(uid, None)
+            state = self.app.sessions.states.get(uid)
+            if (not state or not state.game) and uid not in self.pending:
+                self.messages.pop(uid, None)
+
+    async def _loop(self, uid):
+        try:
+            while uid in self.messages:
+                await self.sleep(1)
+                await self.update(uid)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            self.tasks.pop(uid, None)
+
+    async def close(self):
+        tasks = list(self.tasks.values())
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self.tasks.clear()
+        self.messages.clear()
+        self.pending.clear()
