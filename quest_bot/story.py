@@ -1,4 +1,4 @@
-from . import flags
+from . import battle, flags
 from .models import Quest, State
 
 
@@ -38,13 +38,24 @@ class StoryEngine:
         result = state.model_copy(deep=True)
         if result.game:
             raise ValueError("Сейчас доступны только действия мини-игры")
+        if result.battle:
+            result.scene, finished = battle.step(result.battle, index, self.rng)
+            if finished:
+                result.battle = None
+            self.arrive(result)
+            return result
         available = dict(self.choices(result))
         if type(index) is not int or index not in available:
             raise ValueError("Этот вариант выбора недоступен")
         choice = available[index]
-        if choice.note not in (None, "conditional", "random_choice"):
+        if choice.note not in (None, "conditional", "random_choice", "battle"):
             raise ValueError("Для этого выбора нужен модуль специального режима")
         flags.apply(result.flags, choice.flags)
+        if choice.note == "battle":
+            result.battle = battle.enter(choice)
+            result.scene = choice.start_scene
+            self.arrive(result)
+            return result
         result.history = (result.history + str(index + 1))[-len(SECRET):]
         if result.history == SECRET:
             destination = self.content.secret_ending
