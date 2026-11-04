@@ -101,3 +101,17 @@ class State(BaseModel):
     battle: dict[str, Any] | None = None
     game: dict[str, Any] | None = None
     pre_drunk: dict[str, Any] | None = None
+
+    revision: int = Field(default=0, ge=0)
+    token: str = ""
+    restart_pending: bool = False
+
+
+class Rules(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    lost_win: SceneId = 85
+    lost_win_safe: SceneId = 98
+    lost_lose: SceneId = 86
+    lost_timeout: float = Field(default=60, gt=0, allow_inf_nan=False)
+    shuffle_interval: float = Field(default=2, ge=1, allow_inf_nan=False)
