@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from collections import defaultdict
 from secrets import token_hex
 
@@ -6,6 +7,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 
 STORAGE_ERRORS = (SQLAlchemyError, OSError)
+log = logging.getLogger(__name__)
 
 
 class SessionManager:
@@ -19,7 +21,12 @@ class SessionManager:
 
     async def get(self, uid):
         if uid not in self.states:
-            state, endings = await self.store.read(uid)
+            try:
+                state, endings = await self.store.read(uid)
+            except STORAGE_ERRORS:
+                log.warning("Не удалось прочитать сессию, игра продолжается в памяти", exc_info=True)
+                state, endings = None, set()
+                self.degraded.add(uid)
             self.states[uid] = state if state is not None else self.story.new()
             self.endings[uid] = endings
         return self.states[uid]
@@ -31,5 +38,14 @@ class SessionManager:
         scene = self.story.content.scenes[state.scene]
         if not state.game and scene.type == "ending":
             self.endings[uid].add(scene.ending_id)
-        await self.store.write(uid, state, self.endings[uid])
+        try:
+            if uid in self.degraded:
+                await self.store.init()
+                _, durable_endings = await self.store.read(uid)
+                self.endings[uid].update(durable_endings)
+            await self.store.write(uid, state, self.endings[uid])
+            self.degraded.discard(uid)
+        except STORAGE_ERRORS:
+            log.warning("Не удалось записать сессию, игра продолжается в памяти", exc_info=True)
+            self.degraded.add(uid)
         return state
