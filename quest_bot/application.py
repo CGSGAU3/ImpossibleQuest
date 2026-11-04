@@ -91,3 +91,33 @@ class Application:
             state.restart_pending = False
             state = await self.sessions.put(uid, state)
             return self.render(uid, state)
+
+    async def callback(self, uid, payload):
+        async with self.sessions.locks[uid]:
+            state = await self.sessions.get(uid)
+            parts = payload.split(":")
+            if len(parts) != 3 or not state.token or parts[0] != state.token:
+                log.warning("Устаревшая кнопка пользователя %s", uid)
+                raise ValueError("Эта кнопка устарела. Нажми /start")
+            _, kind, value = parts
+            updated = self.story.tick(state)
+            if (updated.scene != state.scene or bool(updated.game) != bool(state.game)
+                    or updated.pre_drunk != state.pre_drunk):
+                updated.restart_pending = False
+                updated = await self.sessions.put(uid, updated)
+                return self.render(uid, updated)
+            if kind == "restart" and state.restart_pending:
+                if value not in {"yes", "no"}:
+                    raise ValueError("Неверное подтверждение")
+                updated = self.story.new() if value == "yes" else state.model_copy(deep=True)
+                updated.restart_pending = False
+            elif state.restart_pending:
+                raise ValueError("Подтверди или отмени перезапуск")
+            elif kind == "choice":
+                updated = self.story.choose(updated, int(value))
+            elif kind == "game":
+                updated = self.story.play(updated, value)
+            else:
+                raise ValueError("Неверная кнопка")
+            updated = await self.sessions.put(uid, updated)
+            return self.render(uid, updated)
