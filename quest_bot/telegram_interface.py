@@ -1,6 +1,9 @@
 import asyncio
 import logging
+from collections import defaultdict
 
+from aiogram import Dispatcher
+from aiogram.types import CallbackQuery, Message
 from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError, TelegramRetryAfter
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -93,3 +96,67 @@ class GameTimers:
         self.tasks.clear()
         self.messages.clear()
         self.pending.clear()
+
+
+def build_dispatcher(app):
+    dp = Dispatcher()
+    locks = defaultdict(asyncio.Lock)
+
+    async def deliver(message, view):
+        return await send_view(dp["bot"], message.chat.id, view, edit=message)
+
+    timers = GameTimers(app, deliver, locks)
+    dp["game_timers"] = timers
+
+    async def acknowledge(callback, text=None):
+        try:
+            await callback.answer(text)
+        except (TelegramBadRequest, TelegramNetworkError, TelegramRetryAfter):
+            log.warning("Не удалось подтвердить нажатие", exc_info=True)
+
+    @dp.message()
+    async def on_message(message: Message):
+        if message.chat.type != "private":
+            await message.answer("Открой личный чат с ботом")
+            return
+        if message.from_user is None:
+            return
+        uid = message.from_user.id
+        command = (message.text or "").split(maxsplit=1)
+        command = command[0].split("@")[0] if command else ""
+        async with locks[uid]:
+            view = await app.command(uid, command)
+            try:
+                sent = await send_view(dp["bot"], message.chat.id, view)
+            except (TelegramBadRequest, TelegramNetworkError, TelegramRetryAfter):
+                log.warning("Не удалось отправить ответ на команду", exc_info=True)
+                return
+            if view.buttons or command in {"/start", "/load"}:
+                timers.remember(uid, sent)
+
+    @dp.callback_query()
+    async def on_callback(callback: CallbackQuery):
+        uid = callback.from_user.id
+        if (not callback.message or callback.message.chat.type != "private"
+                or callback.message.chat.id != uid):
+            await acknowledge(callback, "Открой личный чат с ботом")
+            return
+        async with locks[uid]:
+            try:
+                view = await app.callback(uid, callback.data or "")
+            except (ValueError, TypeError) as error:
+                await acknowledge(callback, str(error)[:180])
+                return
+            await acknowledge(callback)
+            try:
+                sent = await deliver(callback.message, view)
+            except (TelegramBadRequest, TelegramNetworkError, TelegramRetryAfter):
+                log.warning("Не удалось отправить результат выбора", exc_info=True)
+                return
+            timers.remember(uid, sent)
+
+    async def shutdown():
+        await timers.close()
+
+    dp.shutdown.register(shutdown)
+    return dp
