@@ -1,4 +1,4 @@
-from . import battle, flags
+from . import battle, drunk, flags
 from .models import Quest, State
 
 
@@ -23,8 +23,14 @@ class StoryEngine:
         return state
 
     def arrive(self, state):
-        self._scene(state.scene)
-        state.pre_drunk = None
+        scene = self._scene(state.scene)
+        if not state.battle and any(choice.room == "drunk" for choice in scene.choices):
+            state.pre_drunk = {
+                "visible": [index for index, choice in enumerate(scene.choices)
+                            if flags.matches(state.flags, choice.flags_required)]
+            }
+        else:
+            state.pre_drunk = None
 
     def choices(self, state):
         scene = self._scene(state.scene)
@@ -32,6 +38,7 @@ class StoryEngine:
             (index, choice)
             for index, choice in enumerate(scene.choices)
             if flags.matches(state.flags, choice.flags_required)
+            and (not state.pre_drunk or index in state.pre_drunk["visible"])
         ]
 
     def choose(self, state, index):
@@ -48,13 +55,20 @@ class StoryEngine:
         if type(index) is not int or index not in available:
             raise ValueError("Этот вариант выбора недоступен")
         choice = available[index]
-        if choice.note not in (None, "conditional", "random_choice", "battle"):
+        if result.pre_drunk and len(result.pre_drunk["visible"]) > 1:
+            result.pre_drunk["visible"].remove(index)
+            return result
+        if choice.note == "minigame" and choice.room != "drunk":
             raise ValueError("Для этого выбора нужен модуль специального режима")
         flags.apply(result.flags, choice.flags)
         if choice.note == "battle":
             result.battle = battle.enter(choice)
             result.scene = choice.start_scene
             self.arrive(result)
+            return result
+        if choice.note == "minigame":
+            result.game = drunk.enter(choice.win, choice.lose, self.clock(), self.rng)
+            result.pre_drunk = None
             return result
         result.history = (result.history + str(index + 1))[-len(SECRET):]
         if result.history == SECRET:
@@ -74,4 +88,27 @@ class StoryEngine:
         self._scene(destination)
         result.scene = destination
         self.arrive(result)
+        return result
+
+    def play(self, state, value):
+        result = state.model_copy(deep=True)
+        if not result.game:
+            raise ValueError("Мини-игра неактивна")
+        if result.game["kind"] != "drunk":
+            raise ValueError("Неизвестная мини-игра")
+        destination = drunk.step(result.game, value)
+        if destination is not None:
+            self._scene(destination)
+            result.game = None
+            result.scene = destination
+            self.arrive(result)
+        return result
+
+    def tick(self, state):
+        result = state.model_copy(deep=True)
+        now = self.clock()
+        if (result.game and result.game["kind"] == "drunk"
+                and now - result.game["shuffled"] >= self.rules.shuffle_interval):
+            self.rng.shuffle(result.game["letters"])
+            result.game["shuffled"] = now
         return result
