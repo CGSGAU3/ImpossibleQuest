@@ -1,5 +1,6 @@
 import asyncio
 from dataclasses import dataclass, field
+import logging
 import os
 from pathlib import Path
 import random
@@ -16,6 +17,9 @@ from .content import load_content
 from .models import Rules
 from .sessions import SessionManager, STORAGE_ERRORS
 from .storage import Store
+
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -92,7 +96,9 @@ async def serve(quest_path=None):
     from .telegram_interface import build_dispatcher
 
     settings = read_settings()
+    log.info("Запуск приложения, версия 0.1.0")
     content = load_content(quest_path or settings.quest_path)
+    log.info("Карта загружена: сцен %s, концовок %s", len(content.scenes), len(content.endings))
     rules = (Rules.model_validate_json(Path(settings.rules_path).read_text(encoding="utf-8"))
              if settings.rules_path else Rules())
     store = Store(settings.database_url)
@@ -102,7 +108,7 @@ async def serve(quest_path=None):
         try:
             await store.init()
         except STORAGE_ERRORS:
-            pass
+            log.error("Хранилище недоступно при запуске, сессии будут храниться в памяти", exc_info=True)
         sessions = SessionManager(store, StoryEngine(content, random.Random(), time.time, rules))
         app = Application(sessions)
         bot = Bot(settings.bot_token)
@@ -126,3 +132,4 @@ async def serve(quest_path=None):
             finally:
                 if bot is not None:
                     await bot.session.close()
+                log.info("Остановка приложения")
