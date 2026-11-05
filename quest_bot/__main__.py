@@ -12,7 +12,9 @@ def main():
     args = parser.parse_args()
     if args.serve:
         from .bootstrap import serve
+        from .logging_config import configure_logging
         try:
+            configure_logging()
             asyncio.run(serve(args.quest))
         except (ContentError, ValueError, OSError) as error:
             print(f"Ошибка запуска: {error}", file=sys.stderr)

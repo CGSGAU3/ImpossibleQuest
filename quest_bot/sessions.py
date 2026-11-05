@@ -24,7 +24,7 @@ class SessionManager:
             try:
                 state, endings = await self.store.read(uid)
             except STORAGE_ERRORS:
-                log.warning("Не удалось прочитать сессию, игра продолжается в памяти", exc_info=True)
+                log.error("Не удалось прочитать сессию, игра продолжается в памяти", exc_info=True)
                 state, endings = None, set()
                 self.degraded.add(uid)
             self.states[uid] = state if state is not None else self.story.new()
@@ -37,6 +37,8 @@ class SessionManager:
         self.states[uid] = state
         scene = self.story.content.scenes[state.scene]
         if not state.game and scene.type == "ending":
+            if scene.ending_id not in self.endings[uid]:
+                log.info("Открыта концовка %s", scene.ending_id)
             self.endings[uid].add(scene.ending_id)
         try:
             if uid in self.degraded:
@@ -46,6 +48,6 @@ class SessionManager:
             await self.store.write(uid, state, self.endings[uid])
             self.degraded.discard(uid)
         except STORAGE_ERRORS:
-            log.warning("Не удалось записать сессию, игра продолжается в памяти", exc_info=True)
+            log.error("Не удалось записать сессию, игра продолжается в памяти", exc_info=True)
             self.degraded.add(uid)
         return state
