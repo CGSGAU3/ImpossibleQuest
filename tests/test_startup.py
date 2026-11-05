@@ -16,7 +16,7 @@ def test_installed_package_starts_outside_project(tmp_path):
     )
 
     assert "Карта загружена: сцен 151, концовок 38" in result.stdout
-    assert "подключение к Telegram пока не добавлены" in result.stdout
+    assert "Для запуска Telegram-бота используй --serve" in result.stdout
     assert result.stderr == ""
 
 
