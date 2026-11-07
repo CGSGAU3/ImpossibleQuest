@@ -62,10 +62,16 @@ class Application:
             if state.battle:
                 hp = state.battle["hp"] if state.scene == state.battle["miss"] else state.battle["ehp"]
                 text = text.replace("{}", str(hp))
-            buttons = [
-                button(drunk.PRE_LABELS[index] if state.pre_drunk else choice.text, "choice", index)
-                for index, choice in self.story.choices(state)
-            ]
+            if scene.type == "ending":
+                buttons = [
+                    button("Начать заново", "ending", "new"),
+                    button("Концовки", "ending", "list"),
+                ]
+            else:
+                buttons = [
+                    button(drunk.PRE_LABELS[index] if state.pre_drunk else choice.text, "choice", index)
+                    for index, choice in self.story.choices(state)
+                ]
         displayed = self._storage_notice(uid, text)
         if bold_span is not None:
             shift = len(displayed) - len(text)
@@ -140,6 +146,15 @@ class Application:
                 updated.restart_pending = False
             elif state.restart_pending:
                 raise ValueError("Подтверди или отмени перезапуск")
+            elif kind == "ending":
+                scene = self.story.content.scenes[updated.scene]
+                if updated.game or scene.type != "ending" or value not in {"new", "list"}:
+                    raise ValueError("Неверная кнопка концовки")
+                if value == "new":
+                    return await self._save_view(uid, self.story.new())
+                await self.sessions.put(uid, self.story.new())
+                text = report(self.sessions.endings[uid], self.story.content)
+                return View(self._storage_notice(uid, text))
             elif kind == "choice":
                 updated = self.story.choose(updated, int(value))
             elif kind == "game":
