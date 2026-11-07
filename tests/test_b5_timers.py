@@ -99,7 +99,7 @@ async def test_final_lost_view_retries_after_transient_delivery_failure(b_kit):
         assert delivered == []
         await timers.update(1)
         assert len(attempts) == 2 and len(delivered) == 1
-        assert delivered[0].text == story.content.scenes[86].text
+        assert story.content.scenes[86].text in delivered[0].text
         assert 1 not in timers.messages and 1 not in timers.pending
     finally:
         await timers.close()

@@ -46,3 +46,24 @@ async def test_minigame_and_outage_views(b_kit):
     assert {label for label, _ in view.buttons} == {"4", "8", "15", "16", "23", "42"}
     sessions.degraded.add(1)
     assert "Хранилище недоступно" in app.render(1, state).text
+
+
+async def test_ending_shows_number_and_one_first_unlock_banner(b_kit):
+    app, sessions, story, *_ = b_kit
+    state = await position(b_kit, 7)
+    first = await app.callback(1, f"{state.token}:choice:1")
+
+    assert first.text == (
+        "!!! НОВАЯ КОНЦОВКА !!!\n\nКонцовка #2\n\n" + story.content.scenes[5].text
+    )
+    assert first.text[slice(*first.bold_span)] == "Концовка #2"
+
+    # Следующий запуск берет концовку из базы, как после перезапуска бота.
+    sessions.states.pop(1)
+    sessions.endings.pop(1)
+    resumed = await app.command(1, "/start")
+    assert resumed.text == "Концовка #2\n\n" + story.content.scenes[5].text
+
+    state = await position(b_kit, 7)
+    reopened = await app.callback(1, f"{state.token}:choice:1")
+    assert reopened.text == resumed.text

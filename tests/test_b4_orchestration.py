@@ -10,7 +10,7 @@ async def test_choice_is_saved_and_view_matches_persisted_scene(b_kit):
     result = await app.callback(1, view.buttons[0][1])
     durable, _ = await store.read(1)
     assert durable.scene == 2
-    assert result.text == story.content.scenes[durable.scene].text
+    assert story.content.scenes[durable.scene].text in result.text
     await position(b_kit, 19)
     state = await sessions.get(1)
     state.flags["panic_death"] = True
