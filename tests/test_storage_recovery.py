@@ -41,20 +41,23 @@ async def test_write_outage_keeps_game_in_memory_and_recovers(kit, monkeypatch):
 
 async def test_initial_read_outage_merges_previously_opened_endings(kit, monkeypatch):
     store, sessions = kit
-    await store.write(1, State(scene=2), {3, 7})
+    await store.write(1, State(scene=2, flags={"before": True}), {3, 7})
     read = store.read
     monkeypatch.setattr(store, "read", unavailable)
     state = await sessions.get(1)
     assert state.scene == 1 and sessions.endings[1] == set()
     assert 1 in sessions.degraded
-    state.scene = 2
+    state.scene = 3
+    state.flags["offline"] = True
     await sessions.put(1, state)
     assert 1 in sessions.degraded
     monkeypatch.setattr(store, "read", read)
     sessions.endings[1].add(9)
     await sessions.put(1, state)
     assert sessions.endings[1] == {3, 7, 9}
-    assert (await store.read(1))[1] == {3, 7, 9}
+    recovered, endings = await store.read(1)
+    assert recovered.scene == 3 and recovered.flags == {"offline": True}
+    assert endings == {3, 7, 9}
     assert 1 not in sessions.degraded
 
 
@@ -86,3 +89,51 @@ async def test_recovery_creates_schema_after_initial_directory_failure(tmp_path)
         assert loaded.flags == {"continued": True}
     finally:
         await store.close()
+
+
+async def test_confirmed_restart_does_not_restore_old_session(kit, monkeypatch):
+    from random import Random
+
+    from quest_bot.application import Application
+    from quest_bot.models import Rules
+    from quest_bot.story import StoryEngine
+
+    store, sessions = kit
+    sessions.story = StoryEngine(sessions.story.content, Random(1), lambda: 100, Rules())
+    app = Application(sessions)
+    await store.write(1, State(scene=2, flags={"old": True}), {7})
+    read = store.read
+    monkeypatch.setattr(store, "read", unavailable)
+
+    prompt = await app.command(1, "/restart")
+    monkeypatch.setattr(store, "read", read)
+    await app.callback(1, prompt.buttons[0][1])
+    durable, endings = await read(1)
+    assert durable.scene == app.story.content.start and not durable.flags
+    assert endings == {7}
+
+
+async def test_start_recovers_saved_progress_after_single_read_failure(kit, monkeypatch):
+    from random import Random
+
+    from quest_bot.application import Application
+    from quest_bot.models import Rules
+    from quest_bot.story import StoryEngine
+
+    store, sessions = kit
+    sessions.story = StoryEngine(sessions.story.content, Random(1), lambda: 100, Rules())
+    app = Application(sessions)
+    await store.write(1, State(scene=2, flags={"retained": True}), {7})
+    read = store.read
+
+    async def fail_once(uid):
+        monkeypatch.setattr(store, "read", read)
+        await unavailable()
+
+    monkeypatch.setattr(store, "read", fail_once)
+    view = await app.command(1, "/start")
+    durable, endings = await read(1)
+    assert view.text == app.story.content.scenes[2].text
+    assert durable.scene == 2 and durable.flags == {"retained": True}
+    assert endings == {7}
+    assert not sessions.degraded
