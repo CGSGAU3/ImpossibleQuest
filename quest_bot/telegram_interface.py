@@ -58,11 +58,15 @@ class GameTimers:
         self.tasks = {}
         self.pending = {}
 
+    @staticmethod
+    def _has_timer(state):
+        return state is not None and (state.game or state.scene_deadline is not None)
+
     def remember(self, uid, message, pending=None):
         self.pending.pop(uid, None)
         state = self.app.sessions.states.get(uid)
         retry_result = pending is not None and uid in self.messages
-        if not state or (not state.game and not retry_result):
+        if not self._has_timer(state) and not retry_result:
             self.messages.pop(uid, None)
             return
         self.messages[uid] = message
@@ -91,7 +95,7 @@ class GameTimers:
                 else:
                     self.pending.pop(uid, None)
             state = self.app.sessions.states.get(uid)
-            if (not state or not state.game) and uid not in self.pending:
+            if not self._has_timer(state) and uid not in self.pending:
                 self.messages.pop(uid, None)
 
     async def _loop(self, uid):

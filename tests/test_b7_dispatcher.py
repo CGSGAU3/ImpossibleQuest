@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timezone
 
 import pytest
@@ -187,3 +188,80 @@ async def test_dispatcher_startup_registers_slash_commands(transport):
     assert [command.command for command in request.commands] == [
         "start", "help", "restart", "endings", "save", "load",
     ]
+
+
+async def test_scene45_automatically_delivers_ending_without_a_button_press(b_kit, transport):
+    dp, bot, fake = transport
+    app, _, story, clock, store = b_kit
+    timer_waiting = asyncio.Event()
+    release_timer = asyncio.Event()
+
+    async def controlled_sleep(seconds):
+        timer_waiting.set()
+        await release_timer.wait()
+
+    timers = dp["game_timers"]
+    timers.sleep = controlled_sleep
+    state = await position(b_kit, 44)
+    payload = app.render(1, state).buttons[0][1]
+    await dp.feed_update(bot, callback_update(payload))
+
+    saved, _ = await store.read(1)
+    assert saved.scene == 45 and saved.scene_deadline == clock.now + 300
+    await asyncio.wait_for(timer_waiting.wait(), timeout=1)
+
+    clock.now = saved.scene_deadline
+    timer = timers.tasks[1]
+    release_timer.set()
+    await asyncio.wait_for(timer, timeout=1)
+
+    ended, endings = await store.read(1)
+    assert ended.scene == 46 and ended.scene_deadline is None
+    assert story.content.scenes[46].ending_id in endings
+    assert fake.calls[-1].text == (
+        "!!! НОВАЯ КОНЦОВКА !!!\n\nКонцовка #12\n\n" + story.content.scenes[46].text
+    )
+    assert 1 not in timers.tasks and 1 not in timers.messages
+
+
+async def test_resuming_timed_scene_preserves_deadline_and_leaving_clears_timer(b_kit, transport):
+    dp, bot, fake = transport
+    _, sessions, _, clock, store = b_kit
+    state = await position(b_kit, 45)
+    sessions.states.pop(1)
+    sessions.endings.pop(1)
+    clock.now += 125
+
+    await dp.feed_update(bot, message_update("/start"))
+
+    resumed, _ = await store.read(1)
+    assert resumed.scene_deadline == state.scene_deadline
+    assert resumed.revision == state.revision
+    assert 1 in dp["game_timers"].tasks
+    payload = fake.calls[-1].reply_markup.inline_keyboard[0][0].callback_data
+    await dp.feed_update(bot, callback_update(payload))
+
+    clock.now = state.scene_deadline
+    await dp["game_timers"].update(1)
+    left, _ = await store.read(1)
+    assert left.scene == 48 and left.scene_deadline is None
+    assert 1 not in dp["game_timers"].messages
+
+
+async def test_start_arms_legacy_scene45_only_once(b_kit, transport):
+    dp, bot, _ = transport
+    _, sessions, _, clock, store = b_kit
+    state = await position(b_kit, 45)
+    state.scene_deadline = None
+    await sessions.put(1, state)
+
+    await dp.feed_update(bot, message_update("/start"))
+
+    resumed, _ = await store.read(1)
+    assert resumed.scene_deadline == clock.now + 300
+    assert 1 in dp["game_timers"].tasks
+
+    clock.now += 123
+    await dp.feed_update(bot, message_update("/start"))
+    again, _ = await store.read(1)
+    assert again.scene_deadline == resumed.scene_deadline
