@@ -45,7 +45,8 @@ py -3.11 -m venv .venv
 | PORT | Локальный порт HTTP-сервера | 8080 |
 | QUEST_PATH | Внешний JSON, если не нужна карта из пакета | Карта пакета |
 | RULES_PATH | JSON с настройками игровых правил | Настройки Rules |
-| LOG_PATH | Файл журнала | quest.log |
+| LOG_PATH | Файл журнала. Если файл нельзя открыть, сообщения идут в stderr | quest.log |
+| LOG_LEVEL | Уровень журнала квеста. Для подробностей можно задать DEBUG | INFO |
 
 Путь webhook: `/telegram/webhook`. Перед приложением нужен HTTPS reverse proxy,
 который передает этот путь на BIND_HOST и PORT. Полный внешний URL получается
