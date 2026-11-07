@@ -5,7 +5,7 @@ from aiogram import Bot
 from aiogram.client.session.base import BaseSession
 from aiogram.exceptions import TelegramNetworkError
 from aiogram.methods import AnswerCallbackQuery, EditMessageText, SendMessage
-from aiogram.types import Message, Update
+from aiogram.types import InaccessibleMessage, Message, Update
 
 from b_support import b_kit
 from quest_bot.telegram_interface import build_dispatcher
@@ -101,3 +101,23 @@ async def test_delivery_failure_does_not_rollback_saved_session(b_kit, transport
     fake.fail_send = False
     await dp.feed_update(bot, message_update("/start"))
     assert fake.calls[-1].reply_markup.inline_keyboard
+
+
+async def test_inaccessible_callback_does_not_advance_game(b_kit, transport):
+    dp, bot, fake = transport
+    await dp.feed_update(bot, message_update("/start"))
+    payload = fake.calls[-1].reply_markup.inline_keyboard[0][0].callback_data
+    before = (await b_kit[1].get(1)).model_dump()
+    update_data = callback_update(payload).model_dump(mode="json", exclude_none=True)
+    update_data["callback_query"]["message"]["date"] = 0
+    update = Update.model_validate(update_data)
+    assert isinstance(update.callback_query.message, InaccessibleMessage)
+    calls_before = len(fake.calls)
+
+    await dp.feed_update(bot, update)
+
+    assert (await b_kit[1].get(1)).model_dump() == before
+    assert len(fake.calls) == calls_before + 1
+    answer = fake.calls[-1]
+    assert isinstance(answer, AnswerCallbackQuery)
+    assert answer.text == "Сообщение недоступно. Отправь /start"

@@ -141,6 +141,9 @@ def build_dispatcher(app):
                 or callback.message.chat.id != uid):
             await acknowledge(callback, "Открой личный чат с ботом")
             return
+        if not isinstance(callback.message, Message):
+            await acknowledge(callback, "Сообщение недоступно. Отправь /start")
+            return
         async with locks[uid]:
             try:
                 view = await app.callback(uid, callback.data or "")
