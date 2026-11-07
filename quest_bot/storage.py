@@ -1,10 +1,12 @@
 import asyncio
+from contextlib import nullcontext
 from datetime import datetime, timezone
 import time
 
 from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, JSON, event, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, mapped_column
+from sqlalchemy.pool import StaticPool
 
 from .models import State
 
@@ -49,6 +51,9 @@ class Store:
         self.clock = clock
         self._init_lock = asyncio.Lock()
         self.engine = create_async_engine(url)
+        # In-memory SQLite выдает одно соединение всем сессиям.
+        self._connection_lock = (asyncio.Lock() if isinstance(self.engine.pool, StaticPool)
+                                 else nullcontext())
         if self.engine.dialect.name == "sqlite":
             @event.listens_for(self.engine.sync_engine, "connect")
             def enable_foreign_keys(connection, _):
@@ -59,11 +64,11 @@ class Store:
 
     async def init(self):
         async with self._init_lock:
-            async with self.engine.begin() as connection:
+            async with self._connection_lock, self.engine.begin() as connection:
                 await connection.run_sync(Base.metadata.create_all)
 
     async def read(self, uid):
-        async with self.session() as db:
+        async with self._connection_lock, self.session() as db:
             row = await db.get(Session, uid)
             endings = set(await db.scalars(
                 select(OpenedEnding.ending_id).where(OpenedEnding.user_id == uid)
@@ -71,7 +76,7 @@ class Store:
             return (State.model_validate(row.state) if row else None), endings
 
     async def write(self, uid, state, endings):
-        async with self.session.begin() as db:
+        async with self._connection_lock, self.session.begin() as db:
             await db.merge(User(user_id=uid))
             await db.flush()
             battle = state.battle or {}
@@ -89,13 +94,13 @@ class Store:
                     ))
 
     async def save_checkpoint(self, uid, state):
-        async with self.session.begin() as db:
+        async with self._connection_lock, self.session.begin() as db:
             await db.merge(User(user_id=uid))
             await db.flush()
             await db.merge(Checkpoint(user_id=uid, scene_id=state.scene, flags=state.flags))
 
     async def checkpoint(self, uid):
-        async with self.session() as db:
+        async with self._connection_lock, self.session() as db:
             row = await db.get(Checkpoint, uid)
             return (row.scene_id, dict(row.flags)) if row else None
 
