@@ -1,5 +1,6 @@
 import pytest
 
+from quest_bot.application import Application
 from quest_bot.checkpoints import SaveLoadManager
 from quest_bot.models import State
 from quest_bot.sessions import SessionManager
@@ -71,3 +72,42 @@ async def test_checkpoint_failure_marks_storage_unavailable(kit, monkeypatch, op
     with pytest.raises(ValueError, match="Хранилище недоступно"):
         await getattr(manager, operation)(1, State(scene=1))
     assert 1 in sessions.degraded
+
+
+async def test_timed_scene_resumes_existing_deadline_and_load_starts_fresh_timer(
+    core_engine, core_clock, tmp_path,
+):
+    url = f"sqlite+aiosqlite:///{tmp_path / 'quest.db'}"
+    store = Store(url)
+    try:
+        await store.init()
+        app = Application(SessionManager(store, core_engine))
+        state = State(scene=45, flags={"saved": True})
+        core_engine.arrive(state)
+        await store.write(1, state, set())
+        await app.command(1, "/save")
+        assert await store.checkpoint(1) == (45, {"saved": True})
+
+        state.flags["after_save"] = True
+        await store.write(1, state, set())
+    finally:
+        await store.close()
+
+    core_clock.now = 1120.0
+    store = Store(url)
+    try:
+        app = Application(SessionManager(store, core_engine))
+        await app.command(1, "/start")
+        resumed, _ = await store.read(1)
+        assert resumed.scene == 45
+        assert resumed.scene_deadline == 1300.0
+        assert resumed.flags == {"saved": True, "after_save": True}
+
+        core_clock.now = 1150.0
+        await app.command(1, "/load")
+        restored, _ = await store.read(1)
+        assert restored.scene == 45
+        assert restored.scene_deadline == 1450.0
+        assert restored.flags == {"saved": True}
+    finally:
+        await store.close()
