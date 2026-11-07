@@ -12,7 +12,7 @@ async def test_scene_and_ending_views(b_kit):
     assert len(view.buttons) == len(story.content.scenes[1].choices)
     assert all(data.startswith(state.token + ":choice:") for _, data in view.buttons)
     ending = await position(b_kit, 5)
-    assert app.render(1, ending).buttons == []
+    assert [label for label, _ in app.render(1, ending).buttons] == ["Начать заново", "Концовки"]
     assert report({2}, story.content).startswith("Открыто 1 из 38")
     assert story.content.endings[2] in report({2}, story.content)
 

@@ -52,3 +52,36 @@ async def test_invalid_action_does_not_change_state(b_kit, suffix):
     with pytest.raises(ValueError):
         await app.callback(1, f"{state.token}:{suffix}")
     assert (await sessions.get(1)).model_dump() == before
+
+
+@pytest.mark.parametrize("button_index", [0, 1])
+async def test_ending_buttons_reset_once_and_keep_unlocked_endings(b_kit, button_index):
+    app, sessions, story, _, store = b_kit
+    state = await position(b_kit, 5)
+    payload = app.render(1, state).buttons[button_index][1]
+
+    view = await app.callback(1, payload)
+
+    saved, opened = await store.read(1)
+    assert saved.scene == story.content.start and not saved.restart_pending
+    assert opened == {2}
+    if button_index == 0:
+        assert view.text == story.content.scenes[saved.scene].text
+        assert view.buttons
+    else:
+        assert view.text.startswith("Открыто 1 из 38\n\n")
+        assert story.content.endings[2] in view.text
+        assert not view.buttons
+    with pytest.raises(ValueError, match="устарела"):
+        await app.callback(1, payload)
+    assert (await sessions.get(1)).scene == saved.scene
+
+
+async def test_ending_action_is_unavailable_on_ordinary_scene(b_kit):
+    app, sessions, *_ = b_kit
+    state = await position(b_kit, 7)
+
+    with pytest.raises(ValueError, match="Неверная кнопка концовки"):
+        await app.callback(1, f"{state.token}:ending:new")
+
+    assert (await sessions.get(1)).model_dump() == state.model_dump()
