@@ -82,3 +82,18 @@ async def test_file_store_survives_engine_restart(tmp_path):
         assert endings == {2}
     finally:
         await second.close()
+
+
+async def test_parallel_in_memory_transactions_keep_all_records(store):
+    import asyncio
+
+    async def play(uid):
+        state = State(scene=2, flags={"visited": True})
+        await store.write(uid, state, {1})
+        await store.save_checkpoint(uid, state)
+        assert await store.read(uid) == (state, {1})
+
+    await asyncio.gather(*(play(uid) for uid in range(1, 21)))
+    for uid in range(1, 21):
+        assert await store.read(uid) == (State(scene=2, flags={"visited": True}), {1})
+        assert await store.checkpoint(uid) == (2, {"visited": True})
