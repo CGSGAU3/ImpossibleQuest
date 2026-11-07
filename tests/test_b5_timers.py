@@ -103,3 +103,25 @@ async def test_final_lost_view_retries_after_transient_delivery_failure(b_kit):
         assert 1 not in timers.messages and 1 not in timers.pending
     finally:
         await timers.close()
+
+
+async def test_lost_countdown_keeps_visible_buttons_valid(b_kit):
+    app, sessions, story, clock, store = b_kit
+    state = await position(b_kit, 83)
+    state = await sessions.put(1, story.choose(state, 0))
+    first_view = app.render(1, state)
+    payload = next(data for label, data in first_view.buttons if label == "4")
+
+    clock.now += 1
+    countdown = await app.tick(1)
+
+    assert countdown.text != first_view.text
+    assert countdown.buttons == first_view.buttons
+    saved, _ = await store.read(1)
+    assert (saved.token, saved.revision) == (state.token, state.revision)
+
+    after_choice = await app.callback(1, payload)
+    assert "Введено: 4" in after_choice.text
+    assert (await sessions.get(1)).token != state.token
+    with pytest.raises(ValueError, match="устарела"):
+        await app.callback(1, payload)
