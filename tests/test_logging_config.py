@@ -7,18 +7,27 @@ from quest_bot.logging_config import configure_logging
 
 
 @pytest.fixture
-def configured(tmp_path, monkeypatch):
+def reset_logging():
     root = logging.getLogger()
     handlers, level = list(root.handlers), root.level
+    logger = logging.getLogger("quest_bot")
+    logger_level = logger.level
     root.handlers = []
-    path = tmp_path / "quest.log"
-    monkeypatch.setenv("LOG_PATH", str(path))
-    configure_logging()
-    yield path
+    yield
     for handler in root.handlers:
         handler.close()
     root.handlers = handlers
     root.setLevel(level)
+    logger.setLevel(logger_level)
+
+
+@pytest.fixture
+def configured(tmp_path, monkeypatch, reset_logging):
+    path = tmp_path / "quest.log"
+    monkeypatch.setenv("LOG_PATH", str(path))
+    monkeypatch.delenv("LOG_LEVEL", raising=False)
+    configure_logging()
+    return path
 
 
 def test_rotation_utf8_and_default_level(configured):
@@ -80,3 +89,25 @@ async def test_bootstrap_logs_lifecycle_without_credentials(configured, monkeypa
     assert "Запуск приложения" in text and "Остановка приложения" in text
     assert "Карта загружена: сцен 151, концовок 38" in text
     assert token not in text and secret not in text
+
+
+def test_debug_level_does_not_enable_dependency_debug_logs(tmp_path, monkeypatch, reset_logging):
+    path = tmp_path / "quest.log"
+    monkeypatch.setenv("LOG_PATH", str(path))
+    monkeypatch.setenv("LOG_LEVEL", "debug")
+    configure_logging()
+    logging.getLogger("quest_bot.test").debug("Диагностика квеста")
+    logging.getLogger("aiogram.test").debug("Диагностика библиотеки")
+    text = path.read_text(encoding="utf-8")
+    assert "Диагностика квеста" in text
+    assert "Диагностика библиотеки" not in text
+
+
+def test_unavailable_log_file_keeps_stderr(tmp_path, monkeypatch, reset_logging, capsys):
+    monkeypatch.setenv("LOG_PATH", str(tmp_path / "missing" / "quest.log"))
+    monkeypatch.delenv("LOG_LEVEL", raising=False)
+    configure_logging()
+    logging.getLogger("quest_bot.test").info("Бот работает")
+    stderr = capsys.readouterr().err
+    assert "Файл журнала недоступен" in stderr
+    assert "Бот работает" in stderr
