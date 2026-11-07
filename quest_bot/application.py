@@ -122,9 +122,12 @@ class Application:
                     state = await self.checkpoints.load(uid, state)
                 except ValueError as error:
                     return View(str(error))
-            state = self.story.tick(state)
-            state.restart_pending = False
-            return await self._save_view(uid, state)
+            updated = self.story.tick(state)
+            updated.restart_pending = False
+            if (command == "/start" and state.scene_deadline is not None
+                    and updated == state and state.token and uid not in self.sessions.degraded):
+                return self.render(uid, state)
+            return await self._save_view(uid, updated)
 
     async def callback(self, uid, payload):
         async with self.sessions.locks[uid]:
@@ -166,11 +169,11 @@ class Application:
     async def tick(self, uid):
         async with self.sessions.locks[uid]:
             state = await self.sessions.get(uid)
-            if not state.game:
+            if not state.game and state.scene_deadline is None:
                 return None
             updated = self.story.tick(state)
             if updated == state:
-                if state.game["kind"] == "lost" and not state.restart_pending:
+                if state.game and state.game["kind"] == "lost" and not state.restart_pending:
                     return self.render(uid, state)
                 return None
             if updated.scene != state.scene or bool(updated.game) != bool(state.game):
