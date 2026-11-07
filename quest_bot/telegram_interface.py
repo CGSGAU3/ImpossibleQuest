@@ -3,7 +3,7 @@ import logging
 from collections import defaultdict
 
 from aiogram import Dispatcher
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import BotCommand, CallbackQuery, Message
 from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError, TelegramRetryAfter
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -167,8 +167,20 @@ def build_dispatcher(app):
                 return
             timers.remember(uid, sent)
 
+    async def register_commands(bot):
+        commands = [
+            BotCommand(command="start", description="Начать или продолжить квест"),
+            BotCommand(command="help", description="Справка по командам"),
+            BotCommand(command="restart", description="Начать заново с подтверждением"),
+            BotCommand(command="endings", description="Открытые концовки"),
+            BotCommand(command="save", description="Сохранить чекпоинт"),
+            BotCommand(command="load", description="Загрузить чекпоинт"),
+        ]
+        await bot.set_my_commands(commands)
+
     async def shutdown():
         await timers.close()
 
+    dp.startup.register(register_commands)
     dp.shutdown.register(shutdown)
     return dp
