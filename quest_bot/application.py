@@ -128,7 +128,9 @@ class Application:
             if not state.game:
                 return None
             updated = self.story.tick(state)
-            if updated == state and state.game["kind"] != "lost":
+            if updated == state:
+                if state.game["kind"] == "lost" and not state.restart_pending:
+                    return self.render(uid, state)
                 return None
             if updated.scene != state.scene or bool(updated.game) != bool(state.game):
                 updated.restart_pending = False
