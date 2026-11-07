@@ -4,7 +4,7 @@ import pytest
 from aiogram import Bot
 from aiogram.client.session.base import BaseSession
 from aiogram.exceptions import TelegramNetworkError
-from aiogram.methods import AnswerCallbackQuery, EditMessageText, SendMessage
+from aiogram.methods import AnswerCallbackQuery, EditMessageText, SendMessage, SetMyCommands
 from aiogram.types import InaccessibleMessage, Message, Update
 
 from b_support import b_kit, position
@@ -26,7 +26,7 @@ class FakeSession(BaseSession):
 
     async def make_request(self, bot, method, timeout=None):
         self.calls.append(method)
-        if isinstance(method, AnswerCallbackQuery):
+        if isinstance(method, (AnswerCallbackQuery, SetMyCommands)):
             return True
         if isinstance(method, (SendMessage, EditMessageText)):
             if self.fail_send:
@@ -174,3 +174,16 @@ async def test_lost_result_is_retried_after_final_button_delivery_fails(b_kit, t
 
     assert fake.calls[-1].text == story.content.scenes[saved.scene].text
     assert 1 not in timers.pending and 1 not in timers.messages
+
+
+async def test_dispatcher_startup_registers_slash_commands(transport):
+    dp, bot, fake = transport
+
+    await dp.emit_startup(bot=bot)
+
+    assert len(fake.calls) == 1
+    request = fake.calls[0]
+    assert isinstance(request, SetMyCommands)
+    assert [command.command for command in request.commands] == [
+        "start", "help", "restart", "endings", "save", "load",
+    ]
