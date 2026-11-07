@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timezone
 import time
 
@@ -46,6 +47,7 @@ class Checkpoint(Base):
 class Store:
     def __init__(self, url, clock=time.time):
         self.clock = clock
+        self._init_lock = asyncio.Lock()
         self.engine = create_async_engine(url)
         if self.engine.dialect.name == "sqlite":
             @event.listens_for(self.engine.sync_engine, "connect")
@@ -56,8 +58,9 @@ class Store:
         self.session = async_sessionmaker(self.engine, expire_on_commit=False)
 
     async def init(self):
-        async with self.engine.begin() as connection:
-            await connection.run_sync(Base.metadata.create_all)
+        async with self._init_lock:
+            async with self.engine.begin() as connection:
+                await connection.run_sync(Base.metadata.create_all)
 
     async def read(self, uid):
         async with self.session() as db:
