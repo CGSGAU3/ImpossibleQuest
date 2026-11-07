@@ -7,7 +7,7 @@ from aiogram.exceptions import TelegramNetworkError
 from aiogram.methods import AnswerCallbackQuery, EditMessageText, SendMessage
 from aiogram.types import InaccessibleMessage, Message, Update
 
-from b_support import b_kit
+from b_support import b_kit, position
 from quest_bot.telegram_interface import build_dispatcher
 
 
@@ -121,3 +121,56 @@ async def test_inaccessible_callback_does_not_advance_game(b_kit, transport):
     answer = fake.calls[-1]
     assert isinstance(answer, AnswerCallbackQuery)
     assert answer.text == "Сообщение недоступно. Отправь /start"
+
+
+@pytest.mark.parametrize("entry", ["choice", "resume"])
+async def test_lost_times_out_after_first_view_delivery_fails(b_kit, transport, entry):
+    dp, bot, fake = transport
+    app, sessions, story, clock, store = b_kit
+    state = await position(b_kit, 83)
+    if entry == "choice":
+        update = callback_update(app.render(1, state).buttons[0][1])
+    else:
+        await sessions.put(1, story.choose(state, 0))
+        update = message_update("/start")
+    fake.fail_send = True
+    await dp.feed_update(bot, update)
+
+    saved, _ = await store.read(1)
+    timers = dp["game_timers"]
+    assert saved.game["kind"] == "lost"
+    assert 1 in timers.tasks and 1 in timers.pending
+
+    # Двигаем тестовые часы и выполняем то же обновление, что и фоновая задача.
+    clock.now = saved.game["deadline"]
+    fake.fail_send = False
+    await timers.update(1)
+
+    saved, _ = await store.read(1)
+    assert saved.scene == 86 and saved.game is None
+    assert fake.calls[-1].text == story.content.scenes[86].text
+    assert 1 not in timers.pending and 1 not in timers.messages
+
+
+async def test_lost_result_is_retried_after_final_button_delivery_fails(b_kit, transport):
+    dp, bot, fake = transport
+    app, _, story, _, store = b_kit
+    state = await position(b_kit, 83)
+    await dp.feed_update(bot, callback_update(app.render(1, state).buttons[0][1]))
+
+    for number in ["4", "8", "15", "16", "23", "42"]:
+        keyboard = fake.calls[-1].reply_markup.inline_keyboard
+        payload = next(row[0].callback_data for row in keyboard if row[0].text == number)
+        fake.fail_send = number == "42"
+        await dp.feed_update(bot, callback_update(payload))
+
+    saved, _ = await store.read(1)
+    assert saved.scene in {85, 98} and saved.game is None
+    timers = dp["game_timers"]
+    assert 1 in timers.tasks and 1 in timers.pending and 1 in timers.messages
+
+    fake.fail_send = False
+    await timers.update(1)
+
+    assert fake.calls[-1].text == story.content.scenes[saved.scene].text
+    assert 1 not in timers.pending and 1 not in timers.messages

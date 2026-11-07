@@ -45,13 +45,16 @@ class GameTimers:
         self.tasks = {}
         self.pending = {}
 
-    def remember(self, uid, message):
+    def remember(self, uid, message, pending=None):
         self.pending.pop(uid, None)
         state = self.app.sessions.states.get(uid)
-        if not state or not state.game:
+        retry_result = pending is not None and uid in self.messages
+        if not state or (not state.game and not retry_result):
             self.messages.pop(uid, None)
             return
         self.messages[uid] = message
+        if pending is not None:
+            self.pending[uid] = pending
         task = self.tasks.get(uid)
         if task is None or task.done():
             self.tasks[uid] = asyncio.create_task(self._loop(uid))
@@ -102,8 +105,10 @@ def build_dispatcher(app):
     dp = Dispatcher()
     locks = defaultdict(asyncio.Lock)
 
-    async def deliver(message, view):
-        return await send_view(dp["bot"], message.chat.id, view, edit=message)
+    async def deliver(target, view):
+        if isinstance(target, int):
+            return await send_view(dp["bot"], target, view)
+        return await send_view(dp["bot"], target.chat.id, view, edit=target)
 
     timers = GameTimers(app, deliver, locks)
     dp["game_timers"] = timers
@@ -126,12 +131,15 @@ def build_dispatcher(app):
         command = command[0].split("@")[0] if command else ""
         async with locks[uid]:
             view = await app.command(uid, command)
+            follows_game = bool(view.buttons) or command == "/start"
             try:
                 sent = await send_view(dp["bot"], message.chat.id, view)
             except (TelegramBadRequest, TelegramNetworkError, TelegramRetryAfter):
                 log.warning("Не удалось отправить ответ на команду", exc_info=True)
+                if follows_game:
+                    timers.remember(uid, message.chat.id, pending=view)
                 return
-            if view.buttons or command in {"/start", "/load"}:
+            if follows_game:
                 timers.remember(uid, sent)
 
     @dp.callback_query()
@@ -155,6 +163,7 @@ def build_dispatcher(app):
                 sent = await deliver(callback.message, view)
             except (TelegramBadRequest, TelegramNetworkError, TelegramRetryAfter):
                 log.warning("Не удалось отправить результат выбора", exc_info=True)
+                timers.remember(uid, callback.message, pending=view)
                 return
             timers.remember(uid, sent)
 
