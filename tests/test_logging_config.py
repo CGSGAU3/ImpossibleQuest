@@ -64,7 +64,7 @@ async def test_bootstrap_logs_lifecycle_without_credentials(configured, monkeypa
     token, secret = "do_not_log_this_token", "do_not_log_this_secret"
     settings = bootstrap.Settings(token, transport="polling", webhook_secret=secret)
     store = SimpleNamespace(init=AsyncMock(), close=AsyncMock())
-    bot = SimpleNamespace(session=SimpleNamespace(close=AsyncMock()))
+    bot = SimpleNamespace(session=SimpleNamespace(close=AsyncMock()), delete_webhook=AsyncMock())
 
     class Dispatcher(dict):
         async def start_polling(self, *args, **kwargs):

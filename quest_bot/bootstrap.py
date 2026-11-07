@@ -20,6 +20,7 @@ from .storage import Store
 
 
 log = logging.getLogger(__name__)
+WEBHOOK_PATH = "/telegram/webhook"
 
 
 @dataclass
@@ -74,18 +75,11 @@ def read_settings(environ=None):
 
 
 def create_webhook_app(dispatcher, bot, settings):
-    path = "/telegram/webhook"
-
-    async def startup():
-        await bot.set_webhook(settings.webhook_base_url + path,
-                              secret_token=settings.webhook_secret)
-
-    dispatcher.startup.register(startup)
     server = web.Application()
     handler = SimpleRequestHandler(dispatcher, bot, secret_token=settings.webhook_secret,
                                    handle_in_background=False)
     # Сессию Bot закрывает serve после остановки обработчиков.
-    server.router.add_post(path, handler.handle)
+    server.router.add_post(WEBHOOK_PATH, handler.handle)
     setup_application(server, dispatcher, bot=bot)
     return server
 
@@ -115,12 +109,15 @@ async def serve(quest_path=None):
         dispatcher = build_dispatcher(app)
         dispatcher["bot"] = bot
         if settings.transport == "polling":
+            await bot.delete_webhook(drop_pending_updates=False)
             await dispatcher.start_polling(bot, close_bot_session=False)
             return
         server = create_webhook_app(dispatcher, bot, settings)
         runner = web.AppRunner(server)
         await runner.setup()
         await web.TCPSite(runner, settings.bind_host, settings.port).start()
+        await bot.set_webhook(settings.webhook_base_url + WEBHOOK_PATH,
+                              secret_token=settings.webhook_secret)
         await asyncio.Event().wait()
     finally:
         try:
