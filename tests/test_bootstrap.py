@@ -65,19 +65,6 @@ def test_webhook_wiring_and_secret(monkeypatch):
     assert handler.verify_secret("wrong", bot) is False
 
 
-async def test_webhook_startup_registers_public_url():
-    from aiogram import Dispatcher
-
-    bot = SimpleNamespace(set_webhook=AsyncMock())
-    dispatcher = Dispatcher()
-    settings = bootstrap.Settings("fake", webhook_base_url="https://example.test/bot",
-                                  webhook_secret="secret")
-    bootstrap.create_webhook_app(dispatcher, bot, settings)
-    await dispatcher.emit_startup(bot=bot)
-    bot.set_webhook.assert_awaited_once_with("https://example.test/bot/telegram/webhook",
-                                           secret_token="secret")
-
-
 @pytest.mark.parametrize("failure", [False, True])
 async def test_polling_closes_owned_resources(monkeypatch, failure):
     import quest_bot.application
@@ -85,11 +72,12 @@ async def test_polling_closes_owned_resources(monkeypatch, failure):
 
     settings = bootstrap.Settings("fake", transport="polling")
     store = SimpleNamespace(init=AsyncMock(), close=AsyncMock())
-    bot = SimpleNamespace(session=SimpleNamespace(close=AsyncMock()))
+    bot = SimpleNamespace(session=SimpleNamespace(close=AsyncMock()), delete_webhook=AsyncMock())
 
     class FakeDispatcher(dict):
         async def start_polling(self, value, **kwargs):
             assert value is bot and kwargs["close_bot_session"] is False
+            bot.delete_webhook.assert_awaited_once_with(drop_pending_updates=False)
             if failure:
                 raise RuntimeError("polling failed")
 
@@ -119,6 +107,11 @@ async def test_webhook_cleanup_on_error_or_cancellation(monkeypatch, site_fails)
     runner = SimpleNamespace(setup=AsyncMock(), cleanup=AsyncMock())
     site = SimpleNamespace(start=AsyncMock(side_effect=OSError("bind failed") if site_fails else None))
 
+    async def register(*args, **kwargs):
+        site.start.assert_awaited_once()
+
+    bot.set_webhook.side_effect = register
+
     class Stop:
         async def wait(self):
             raise asyncio.CancelledError
@@ -134,6 +127,11 @@ async def test_webhook_cleanup_on_error_or_cancellation(monkeypatch, site_fails)
     monkeypatch.setattr(quest_bot.telegram_interface, "build_dispatcher", lambda app: Dispatcher())
     with pytest.raises(OSError if site_fails else asyncio.CancelledError):
         await bootstrap.serve()
+    if site_fails:
+        bot.set_webhook.assert_not_awaited()
+    else:
+        bot.set_webhook.assert_awaited_once_with("https://example.test/telegram/webhook",
+                                               secret_token="secret")
     runner.cleanup.assert_awaited_once()
     store.close.assert_awaited_once()
     bot.session.close.assert_awaited_once()
