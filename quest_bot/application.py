@@ -25,6 +25,11 @@ class Application:
         self.story = sessions.story
         self.checkpoints = SaveLoadManager(sessions)
 
+    def _storage_notice(self, uid, text):
+        if uid in self.sessions.degraded:
+            return WARNING + "\n\n" + text
+        return text
+
     def render(self, uid, state):
         def button(label, kind, value):
             return label, f"{state.token}:{kind}:{value}"
@@ -54,9 +59,7 @@ class Application:
                 button(drunk.PRE_LABELS[index] if state.pre_drunk else choice.text, "choice", index)
                 for index, choice in self.story.choices(state)
             ]
-        if uid in self.sessions.degraded:
-            text = WARNING + "\n\n" + text
-        return View(text, buttons)
+        return View(self._storage_notice(uid, text), buttons)
 
     async def command(self, uid, command):
         async with self.sessions.locks[uid]:
@@ -67,7 +70,8 @@ class Application:
                 return View("Неизвестная команда")
             state = await self.sessions.get(uid)
             if command == "/endings":
-                return View(report(self.sessions.endings[uid], self.story.content))
+                text = report(self.sessions.endings[uid], self.story.content)
+                return View(self._storage_notice(uid, text))
             if command == "/save":
                 try:
                     await self.checkpoints.save(uid, state)
@@ -78,7 +82,8 @@ class Application:
                 state = state.model_copy(deep=True)
                 state.restart_pending = True
                 state = await self.sessions.put(uid, state)
-                return View("Начать заново? Открытые концовки сохранятся.", [
+                text = self._storage_notice(uid, "Начать заново? Открытые концовки сохранятся.")
+                return View(text, [
                     ("Да", f"{state.token}:restart:yes"),
                     ("Нет", f"{state.token}:restart:no"),
                 ])

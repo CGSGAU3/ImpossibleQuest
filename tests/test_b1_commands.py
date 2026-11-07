@@ -34,3 +34,34 @@ async def test_checkpoint_commands_and_missing_checkpoint(b_kit):
     await app.command(2, "/load")
     assert (await sessions.get(2)).scene == 1
     assert (await app.command(1, "/endings")).text.startswith("Открыто 0 из 38")
+
+
+async def test_endings_warns_when_session_read_fails(b_kit, monkeypatch):
+    app, sessions, _, _, store = b_kit
+
+    async def fail_read(uid):
+        raise OSError("offline")
+
+    monkeypatch.setattr(store, "read", fail_read)
+    view = await app.command(1, "/endings")
+
+    assert 1 in sessions.degraded
+    assert view.text.startswith("Хранилище недоступно.")
+    assert "Открыто 0 из 38" in view.text
+
+
+async def test_restart_warns_when_confirmation_write_fails(b_kit, monkeypatch):
+    app, sessions, _, _, store = b_kit
+    await position(b_kit, 9)
+
+    async def fail_write(*args):
+        raise OSError("offline")
+
+    monkeypatch.setattr(store, "write", fail_write)
+    view = await app.command(1, "/restart")
+
+    assert 1 in sessions.degraded
+    assert view.text.startswith("Хранилище недоступно.")
+    assert [label for label, _ in view.buttons] == ["Да", "Нет"]
+    state = await sessions.get(1)
+    assert state.scene == 9 and state.restart_pending
