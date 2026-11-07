@@ -137,3 +137,23 @@ async def test_start_recovers_saved_progress_after_single_read_failure(kit, monk
     assert durable.scene == 2 and durable.flags == {"retained": True}
     assert endings == {7}
     assert not sessions.degraded
+
+
+async def test_parallel_users_recover_missing_schema(tmp_path):
+    import asyncio
+
+    store = Store(f"sqlite+aiosqlite:///{tmp_path / 'quest.db'}")
+    sessions = SessionManager(store, make_story())
+
+    async def start(uid):
+        state = await sessions.get(uid)
+        await sessions.put(uid, state)
+
+    try:
+        await asyncio.gather(*(start(uid) for uid in range(1, 13)))
+        assert not sessions.degraded
+        for uid in range(1, 13):
+            state, _ = await store.read(uid)
+            assert state is not None
+    finally:
+        await store.close()
