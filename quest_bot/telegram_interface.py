@@ -5,7 +5,7 @@ from collections import defaultdict
 from aiogram import Dispatcher
 from aiogram.types import BotCommand, CallbackQuery, Message
 from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError, TelegramRetryAfter
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity
 
 
 log = logging.getLogger(__name__)
@@ -19,9 +19,21 @@ async def send_view(bot, chat_id, view, edit=None):
             for label, data in view.buttons
         ])
     chunks = [view.text[index:index + 4000] for index in range(0, len(view.text), 4000)] or [" "]
+    def formatting(chunk, start):
+        if view.bold_span is None:
+            return {}
+        left = max(0, view.bold_span[0] - start)
+        right = min(len(chunk), view.bold_span[1] - start)
+        if left >= right:
+            return {}
+        # Telegram считает смещение и длину в кодовых единицах UTF-16.
+        offset = len(chunk[:left].encode("utf-16-le")) // 2
+        length = len(chunk[left:right].encode("utf-16-le")) // 2
+        return {"entities": [MessageEntity(type="bold", offset=offset, length=length)]}
+
     if edit is not None and len(chunks) == 1:
         try:
-            await edit.edit_text(chunks[0], reply_markup=markup)
+            await edit.edit_text(chunks[0], reply_markup=markup, **formatting(chunks[0], 0))
             return edit
         except TelegramBadRequest as error:
             if "message is not modified" in str(error):
@@ -31,6 +43,7 @@ async def send_view(bot, chat_id, view, edit=None):
     for index, chunk in enumerate(chunks):
         message = await bot.send_message(
             chat_id, chunk, reply_markup=markup if index == len(chunks) - 1 else None,
+            **formatting(chunk, index * 4000),
         )
     return message
 

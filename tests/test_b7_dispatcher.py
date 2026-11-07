@@ -148,7 +148,7 @@ async def test_lost_times_out_after_first_view_delivery_fails(b_kit, transport, 
 
     saved, _ = await store.read(1)
     assert saved.scene == 86 and saved.game is None
-    assert fake.calls[-1].text == story.content.scenes[86].text
+    assert story.content.scenes[86].text in fake.calls[-1].text
     assert 1 not in timers.pending and 1 not in timers.messages
 
 
@@ -172,7 +172,7 @@ async def test_lost_result_is_retried_after_final_button_delivery_fails(b_kit, t
     fake.fail_send = False
     await timers.update(1)
 
-    assert fake.calls[-1].text == story.content.scenes[saved.scene].text
+    assert story.content.scenes[saved.scene].text in fake.calls[-1].text
     assert 1 not in timers.pending and 1 not in timers.messages
 
 

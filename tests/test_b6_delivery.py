@@ -44,3 +44,18 @@ async def test_network_failure_is_reported_to_caller():
         raise TelegramNetworkError(SendMessage(chat_id=1, text="Сцена"), "offline")
     with pytest.raises(TelegramNetworkError):
         await send_view(SimpleNamespace(send_message=fail), 1, View("Сцена"))
+
+
+async def test_ending_number_uses_utf16_entity_without_parsing_scene_text():
+    bot = FakeBot()
+    text = "🎮 Концовка #2\n\nСимволы < > & остаются на месте."
+    start = text.index("Концовка")
+    view = View(text, bold_span=(start, start + len("Концовка #2")))
+
+    await send_view(bot, 1, view)
+
+    assert bot.calls[0][1] == text
+    options = bot.calls[0][2]
+    entity, = options["entities"]
+    assert (entity.type, entity.offset, entity.length) == ("bold", start + 1, len("Концовка #2"))
+    assert "parse_mode" not in options

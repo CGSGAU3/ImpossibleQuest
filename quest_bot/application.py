@@ -17,6 +17,7 @@ WARNING = "Хранилище недоступно. Прогресс време�
 class View:
     text: str
     buttons: list[tuple[str, str]] = field(default_factory=list)
+    bold_span: tuple[int, int] | None = None
 
 
 class Application:
@@ -30,10 +31,11 @@ class Application:
             return WARNING + "\n\n" + text
         return text
 
-    def render(self, uid, state):
+    def render(self, uid, state, *, new_ending=False):
         def button(label, kind, value):
             return label, f"{state.token}:{kind}:{value}"
 
+        bold_span = None
         if state.game and state.game["kind"] == "drunk":
             game = state.game
             text = (
@@ -52,6 +54,11 @@ class Application:
         else:
             scene = self.story.content.scenes[state.scene]
             text = scene.text
+            if scene.type == "ending":
+                banner = "!!! НОВАЯ КОНЦОВКА !!!\n\n" if new_ending else ""
+                heading = f"Концовка #{scene.ending_id}"
+                text = f"{banner}{heading}\n\n{text}"
+                bold_span = (len(banner), len(banner) + len(heading))
             if state.battle:
                 hp = state.battle["hp"] if state.scene == state.battle["miss"] else state.battle["ehp"]
                 text = text.replace("{}", str(hp))
@@ -59,7 +66,24 @@ class Application:
                 button(drunk.PRE_LABELS[index] if state.pre_drunk else choice.text, "choice", index)
                 for index, choice in self.story.choices(state)
             ]
-        return View(self._storage_notice(uid, text), buttons)
+        displayed = self._storage_notice(uid, text)
+        if bold_span is not None:
+            shift = len(displayed) - len(text)
+            bold_span = (bold_span[0] + shift, bold_span[1] + shift)
+        return View(displayed, buttons, bold_span)
+
+    async def _save_view(self, uid, state):
+        already_opened = self.sessions.endings[uid].copy()
+        started_degraded = uid in self.sessions.degraded
+        saved = await self.sessions.put(uid, state)
+        scene = self.story.content.scenes[saved.scene]
+        new_ending = (
+            not started_degraded and uid not in self.sessions.degraded
+            and scene.type == "ending" and not saved.game
+            and scene.ending_id not in already_opened
+            and scene.ending_id in self.sessions.endings[uid]
+        )
+        return self.render(uid, saved, new_ending=new_ending)
 
     async def command(self, uid, command):
         async with self.sessions.locks[uid]:
@@ -94,8 +118,7 @@ class Application:
                     return View(str(error))
             state = self.story.tick(state)
             state.restart_pending = False
-            state = await self.sessions.put(uid, state)
-            return self.render(uid, state)
+            return await self._save_view(uid, state)
 
     async def callback(self, uid, payload):
         async with self.sessions.locks[uid]:
@@ -109,8 +132,7 @@ class Application:
             if (updated.scene != state.scene or bool(updated.game) != bool(state.game)
                     or updated.pre_drunk != state.pre_drunk):
                 updated.restart_pending = False
-                updated = await self.sessions.put(uid, updated)
-                return self.render(uid, updated)
+                return await self._save_view(uid, updated)
             if kind == "restart" and state.restart_pending:
                 if value not in {"yes", "no"}:
                     raise ValueError("Неверное подтверждение")
@@ -124,8 +146,7 @@ class Application:
                 updated = self.story.play(updated, value)
             else:
                 raise ValueError("Неверная кнопка")
-            updated = await self.sessions.put(uid, updated)
-            return self.render(uid, updated)
+            return await self._save_view(uid, updated)
 
     async def tick(self, uid):
         async with self.sessions.locks[uid]:
@@ -141,5 +162,4 @@ class Application:
                 updated.restart_pending = False
             elif state.restart_pending:
                 return None
-            updated = await self.sessions.put(uid, updated)
-            return self.render(uid, updated)
+            return await self._save_view(uid, updated)
