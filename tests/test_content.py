@@ -66,15 +66,21 @@ def test_accepts_supported_transition_types(small_quest, write_quest):
         {"text": "По условию", "note": "conditional", "conditions": [{"flags_required": {"a": True}, "next": 2}]},
         {"text": "Случайно", "note": "random_choice", "options": [2]},
         {"text": "В бой", "note": "battle", "start_scene": 3, "hit": 3, "hit_by_enemy": 3, "win": 2, "lose": 2},
-        {"text": "Drunk", "note": "minigame", "room": "drunk", "win": 2, "lose": 2},
+        {"text": "К Drunk", "next": 4},
         {"text": "Lost", "note": "minigame", "room": "lost"},
     ]
     small_quest["3"] = {"type": "scene", "text": "Бой", "choices": [
         {"text": f"Удар {number}", "next": None} for number in range(1, 4)
     ]}
 
+    small_quest["4"] = {"type": "scene", "text": "Подготовка к Drunk", "choices": [
+        {"text": f"Вход {number}", "note": "minigame", "room": "drunk", "win": 2, "lose": 2}
+        for number in range(1, 4)
+    ]}
+
     quest = load_content(write_quest(small_quest))
 
+    assert len(quest.scenes[4].choices) == 3
     assert len(quest.scenes[1].choices) == 5
     assert quest.scenes[3].choices[0].next is None
 
@@ -134,6 +140,28 @@ def test_battle_requires_three_available_actions(small_quest, write_quest, field
     small_quest["1"]["choices"] = [choice]
 
     with pytest.raises(ContentError, match=rf"choices.0.{field}.*сцена боя {target}"):
+        load_content(write_quest(small_quest))
+
+
+@pytest.mark.parametrize("invalid", ["too_few", "too_many", "mixed", "gated", "wrong_note"])
+def test_drunk_preparation_requires_three_unguarded_entries(small_quest, write_quest, invalid):
+    choices = [
+        {"text": f"Вход {number}", "note": "minigame", "room": "drunk", "win": 2, "lose": 2}
+        for number in range(1, 4)
+    ]
+    if invalid == "too_few":
+        choices.pop()
+    elif invalid == "too_many":
+        choices.append(dict(choices[0]))
+    elif invalid == "mixed":
+        choices[0] = {"text": "В сюжет", "next": 2}
+    elif invalid == "gated":
+        choices[0]["flags_required"] = {"locked": True}
+    else:
+        choices[0].update(note=None, next=2)
+    small_quest["1"]["choices"] = choices
+
+    with pytest.raises(ContentError, match="сцена 1.*Drunk"):
         load_content(write_quest(small_quest))
 
 

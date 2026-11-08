@@ -76,6 +76,12 @@ def _check_references(quest: Quest):
                     battle_scenes.add(target)
 
     for sid, scene in scenes.items():
+        if any(choice.room == "drunk" for choice in scene.choices):
+            if len(scene.choices) != 3 or any(
+                choice.note != "minigame" or choice.room != "drunk" or choice.flags_required
+                for choice in scene.choices
+            ):
+                raise ContentError(f"сцена {sid}: для Drunk нужны ровно три доступных входа в мини-игру")
         for index, choice in enumerate(scene.choices):
             # В сценах боя следующий шаг вычисляет боевая механика.
             if choice.note is None and choice.next is None and sid not in battle_scenes:
