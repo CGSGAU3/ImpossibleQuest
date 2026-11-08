@@ -5,6 +5,18 @@ from .models import Quest, State
 SECRET = "2213112312113312231"
 
 
+def _next_history(history, index):
+    return (history + str(index + 1))[-len(SECRET):]
+
+
+def _conditional_destination(choice, current_flags):
+    return next(
+        (condition.next for condition in choice.conditions
+         if flags.matches(current_flags, condition.flags_required)),
+        None,
+    )
+
+
 class StoryEngine:
     def __init__(self, content: Quest, rng, clock, rules):
         self.content = content
@@ -41,12 +53,19 @@ class StoryEngine:
         scene = self._scene(state.scene)
         if state.game:
             return []
-        return [
-            (index, choice)
-            for index, choice in enumerate(scene.choices)
-            if flags.matches(state.flags, choice.flags_required)
-            and (not state.pre_drunk or index in state.pre_drunk["visible"])
-        ]
+        available = []
+        for index, choice in enumerate(scene.choices):
+            if not flags.matches(state.flags, choice.flags_required):
+                continue
+            if state.pre_drunk and index not in state.pre_drunk["visible"]:
+                continue
+            if not state.battle and choice.note == "conditional":
+                next_flags = {**state.flags, **choice.flags}
+                secret = _next_history(state.history, index) == SECRET
+                if not secret and _conditional_destination(choice, next_flags) is None:
+                    continue
+            available.append((index, choice))
+        return available
 
     def choose(self, state, index):
         result = self.tick(state)
@@ -77,17 +96,11 @@ class StoryEngine:
             result.game = minigames.enter(choice, self.clock(), self.rng, self.rules)
             result.pre_drunk = None
             return result
-        result.history = (result.history + str(index + 1))[-len(SECRET):]
+        result.history = _next_history(result.history, index)
         if result.history == SECRET:
             destination = self.content.secret_ending
         elif choice.note == "conditional":
-            destination = next(
-                (condition.next for condition in choice.conditions
-                 if flags.matches(result.flags, condition.flags_required)),
-                None,
-            )
-            if destination is None:
-                raise ValueError("Нет подходящего условия перехода")
+            destination = _conditional_destination(choice, result.flags)
         elif choice.note == "random_choice":
             destination = self.rng.choice(choice.options)
         else:

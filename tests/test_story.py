@@ -5,7 +5,7 @@ from pydantic import ValidationError
 
 from quest_bot import flags
 from quest_bot.models import Condition, Rules, State
-from quest_bot.story import StoryEngine
+from quest_bot.story import SECRET, StoryEngine
 
 
 def test_new_game_starts_clean(small_engine):
@@ -60,12 +60,37 @@ def test_unknown_scene_is_reported_without_changes(small_engine):
     assert state.scene == 999
 
 
-def test_unmatched_condition_is_atomic(small_engine):
-    small_engine.content.scenes[2].choices[0].conditions = [Condition(flags_required={"other": True}, next=3)]
+def test_unmatched_condition_is_hidden_and_rejected(small_engine):
+    choice = small_engine.content.scenes[2].choices[0]
+    choice.conditions = [Condition(flags_required={"other": True}, next=3)]
     state = State(scene=2)
-    with pytest.raises(ValueError, match="условия"):
+
+    assert small_engine.choices(state) == []
+    with pytest.raises(ValueError, match="недоступен"):
         small_engine.choose(state, 0)
     assert state == State(scene=2)
+
+
+def test_conditional_visibility_includes_flags_set_by_the_choice(small_engine):
+    choice = small_engine.content.scenes[2].choices[0]
+    choice.conditions = [Condition(flags_required={"other": True}, next=3)]
+    choice.flags = {"other": True}
+    state = State(scene=2)
+
+    assert small_engine.choices(state) == [(0, choice)]
+    assert state.flags == {}
+    result = small_engine.choose(state, 0)
+    assert result.scene == 3
+    assert result.flags == {"other": True}
+
+
+def test_secret_path_keeps_precedence_over_an_unmatched_condition(small_engine):
+    choice = small_engine.content.scenes[2].choices[0]
+    choice.conditions = [Condition(flags_required={"other": True}, next=3)]
+    state = State(scene=2, history=SECRET[:-1])
+
+    assert small_engine.choices(state) == [(0, choice)]
+    assert small_engine.choose(state, 0).scene == small_engine.content.secret_ending
 
 
 def test_shared_state_fields_survive_json_roundtrip():
