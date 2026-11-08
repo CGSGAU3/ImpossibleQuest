@@ -80,3 +80,11 @@ def test_regular_choices_are_rejected_during_drunk(core_engine):
     state = begin(core_engine)
     with pytest.raises(ValueError, match="только действия"):
         core_engine.choose(state, 0)
+
+
+def test_preparation_labels_match_agreed_text():
+    assert drunk.PRE_LABELS == (
+        "Я пьяный?! Т-ты пьяный!",
+        "А-а-а де тут туалет?",
+        "А чиво все крутица?",
+    )
