@@ -3,6 +3,10 @@ from .models import Quest, State
 
 
 SECRET = "2213112312113312231"
+WAIT_SCENE = 45
+WAIT_ENDING = 46
+WAIT_SECONDS = 5 * 60
+WAIT_PROMPT = '"Вейт фор файв миннетс!", - крикнул он и убежал.'
 
 
 def _next_history(history, index):
@@ -34,6 +38,15 @@ class StoryEngine:
             raise ValueError(f"Сцена {sid} не найдена")
         return self.content.scenes[sid]
 
+    def _is_wait_scene(self, state, scene):
+        if state.scene != WAIT_SCENE or state.battle or state.game:
+            return False
+        ending = self.content.scenes.get(WAIT_ENDING)
+        return (
+            scene.type == "scene" and scene.text == WAIT_PROMPT
+            and ending is not None and ending.type == "ending" and ending.ending_id == 12
+        )
+
     def new(self):
         state = State(scene=self.content.start)
         self.arrive(state)
@@ -41,6 +54,9 @@ class StoryEngine:
 
     def arrive(self, state):
         scene = self._scene(state.scene)
+        state.scene_deadline = None
+        if self._is_wait_scene(state, scene):
+            state.scene_deadline = self.clock() + WAIT_SECONDS
         if not state.battle and any(choice.room == "drunk" for choice in scene.choices):
             state.pre_drunk = {
                 "visible": [index for index, choice in enumerate(scene.choices)
@@ -73,6 +89,8 @@ class StoryEngine:
             if result.game is None:
                 return result
             raise ValueError("Сейчас доступны только действия мини-игры")
+        if result.scene != state.scene:
+            return result
         if result.battle:
             result.scene, finished = battle.step(result.battle, index, self.rng)
             if finished:
@@ -95,6 +113,7 @@ class StoryEngine:
         if choice.note == "minigame":
             result.game = minigames.enter(choice, self.clock(), self.rng, self.rules)
             result.pre_drunk = None
+            result.scene_deadline = None
             return result
         result.history = _next_history(result.history, index)
         if result.history == SECRET:
@@ -127,10 +146,17 @@ class StoryEngine:
         return result
 
     def tick(self, state):
-        self._scene(state.scene)
+        scene = self._scene(state.scene)
         result = state.model_copy(deep=True)
         now = self.clock()
-        if result.game and result.game["kind"] == "lost" and now >= result.game["deadline"]:
+        if self._is_wait_scene(result, scene):
+            if result.scene_deadline is None:
+                # Сессии, записанные до добавления таймера, не содержат срока.
+                result.scene_deadline = now + WAIT_SECONDS
+            elif now >= result.scene_deadline:
+                result.scene = WAIT_ENDING
+                self.arrive(result)
+        elif result.game and result.game["kind"] == "lost" and now >= result.game["deadline"]:
             result.game = None
             result.scene = self.rules.lost_lose
             self.arrive(result)
