@@ -101,6 +101,7 @@ class State(BaseModel):
     battle: dict[str, Any] | None = None
     game: dict[str, Any] | None = None
     pre_drunk: dict[str, Any] | None = None
+    scene_deadline: float | None = Field(default=None, allow_inf_nan=False)
 
     revision: int = Field(default=0, ge=0)
     token: str = ""

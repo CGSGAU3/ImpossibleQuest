@@ -113,3 +113,78 @@ def test_scene44_parachute_choice_goes_to_scene48(core_engine):
     )
 
     assert core_engine.choose(state, choice_index).scene == 48
+
+
+def test_scene45_wait_expires_at_exact_deadline(core_engine, core_clock):
+    waiting = core_engine.choose(State(scene=44), 0)
+
+    assert waiting.scene == 45
+    assert waiting.scene_deadline == 1300.0
+    assert waiting.game is None and waiting.battle is None
+    assert State.model_validate_json(waiting.model_dump_json()) == waiting
+
+    core_clock.now = 1299.9
+    assert core_engine.tick(waiting) == waiting
+    core_clock.now = 1300.0
+    expired = core_engine.tick(waiting)
+    assert expired.scene == 46
+    assert expired.scene_deadline is None
+    assert core_engine.tick(expired) == expired
+    assert waiting.scene == 45
+
+
+def test_scene45_can_leave_before_deadline(core_engine, core_clock):
+    waiting = core_engine.choose(State(scene=44), 0)
+    core_clock.now = 1299.9
+    next_state = core_engine.choose(waiting, 0)
+
+    assert next_state.scene == 48
+    assert next_state.scene_deadline is None
+    core_clock.now = 1300.0
+    assert core_engine.tick(next_state) == next_state
+
+
+def test_scene45_expiry_takes_priority_over_late_choice(core_engine, core_clock):
+    waiting = core_engine.choose(State(scene=44), 0)
+    core_clock.now = waiting.scene_deadline
+
+    expired = core_engine.choose(waiting, 0)
+
+    assert expired.scene == 46
+    assert expired.scene_deadline is None
+    assert expired.history == waiting.history
+    assert expired.flags == waiting.flags
+
+
+def test_scene45_fresh_arrival_starts_full_wait(core_engine, core_clock):
+    previous = core_engine.choose(State(scene=44), 0)
+    core_clock.now = 1100.0
+    loaded = State(scene=45, flags={"saved": True})
+
+    core_engine.arrive(loaded)
+
+    assert loaded.scene_deadline == 1400.0
+    assert previous.scene_deadline == 1300.0
+    assert loaded.flags == {"saved": True}
+
+
+def test_unrelated_map_keeps_scene45_ordinary(small_engine):
+    small_engine.content.scenes[45] = small_engine.content.scenes[1]
+    small_engine.content.scenes[46] = small_engine.content.scenes[4]
+    state = State(scene=45)
+
+    small_engine.arrive(state)
+
+    assert state.scene_deadline is None
+    assert small_engine.choose(state, 0).scene == 2
+
+
+
+def test_old_scene45_session_gets_a_deadline_once(core_engine, core_clock):
+    saved = State.model_validate_json('{"scene":45}')
+    resumed = core_engine.tick(saved)
+
+    assert resumed.scene_deadline == 1300.0
+    assert saved.scene_deadline is None
+    core_clock.now = 1100.0
+    assert core_engine.tick(resumed).scene_deadline == 1300.0
