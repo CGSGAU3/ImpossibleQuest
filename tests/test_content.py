@@ -69,7 +69,9 @@ def test_accepts_supported_transition_types(small_quest, write_quest):
         {"text": "Drunk", "note": "minigame", "room": "drunk", "win": 2, "lose": 2},
         {"text": "Lost", "note": "minigame", "room": "lost"},
     ]
-    small_quest["3"] = {"type": "scene", "text": "Бой", "choices": [{"text": "Удар", "next": None}]}
+    small_quest["3"] = {"type": "scene", "text": "Бой", "choices": [
+        {"text": f"Удар {number}", "next": None} for number in range(1, 4)
+    ]}
 
     quest = load_content(write_quest(small_quest))
 
@@ -107,6 +109,31 @@ def test_checks_every_battle_destination(small_quest, write_quest, field):
     small_quest["1"]["choices"] = [choice]
 
     with pytest.raises(ContentError, match=rf"choices.0.{field}.*999"):
+        load_content(write_quest(small_quest))
+
+
+@pytest.mark.parametrize("field", ["start_scene", "hit", "hit_by_enemy"])
+@pytest.mark.parametrize("invalid", ["ending", "too_few", "too_many", "gated"])
+def test_battle_requires_three_available_actions(small_quest, write_quest, field, invalid):
+    actions = [{"text": f"Удар {number}"} for number in range(1, 4)]
+    small_quest["3"] = {"type": "scene", "text": "Бой", "choices": actions}
+    small_quest["4"] = {"type": "scene", "text": "Ход боя", "choices": [dict(action) for action in actions]}
+    target = 4
+    if invalid == "ending":
+        target = 2
+    elif invalid == "too_few":
+        small_quest["4"]["choices"].pop()
+    elif invalid == "too_many":
+        small_quest["4"]["choices"].append({"text": "Еще удар"})
+    else:
+        small_quest["4"]["choices"][0]["flags_required"] = {"locked": True}
+
+    choice = {"text": "Бой", "note": "battle", "start_scene": 3, "hit": 3,
+              "hit_by_enemy": 3, "win": 2, "lose": 2}
+    choice[field] = target
+    small_quest["1"]["choices"] = [choice]
+
+    with pytest.raises(ContentError, match=rf"choices.0.{field}.*сцена боя {target}"):
         load_content(write_quest(small_quest))
 
 

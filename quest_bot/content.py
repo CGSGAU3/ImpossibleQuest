@@ -60,7 +60,20 @@ def _check_references(quest: Quest):
                         f"сцена {sid}, choices.{index}.{field}: сцена {target} не найдена"
                     )
             if choice.note == "battle":
-                battle_scenes.update((choice.start_scene, choice.hit, choice.hit_by_enemy))
+                for field in ("start_scene", "hit", "hit_by_enemy"):
+                    target = getattr(choice, field)
+                    action_scene = scenes[target]
+                    if (
+                        action_scene.type != "scene"
+                        or len(action_scene.choices) != 3
+                        or any(action.note is not None or action.flags_required
+                               for action in action_scene.choices)
+                    ):
+                        raise ContentError(
+                            f"сцена {sid}, choices.{index}.{field}: "
+                            f"сцена боя {target} должна содержать ровно три доступных действия"
+                        )
+                    battle_scenes.add(target)
 
     for sid, scene in scenes.items():
         for index, choice in enumerate(scene.choices):
