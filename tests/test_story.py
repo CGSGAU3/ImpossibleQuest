@@ -103,3 +103,13 @@ def test_shared_state_fields_survive_json_roundtrip():
 def test_rules_reject_invalid_timing(kwargs):
     with pytest.raises(ValidationError):
         Rules(**kwargs)
+
+
+def test_scene44_parachute_choice_goes_to_scene48(core_engine):
+    state = State(scene=44)
+    choice_index = next(
+        index for index, choice in core_engine.choices(state)
+        if choice.text == "Выпутаться из парашюта"
+    )
+
+    assert core_engine.choose(state, choice_index).scene == 48
